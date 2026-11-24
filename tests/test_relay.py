@@ -62,7 +62,7 @@ def test_coalesced_burst_and_concurrency(server: TelemetryServer, log_path: Path
         burst = b"".join(encode_frame(f"c{cid}-{i}".encode()) for i in range(per_client))
         with connect(server) as sock:
             sock.sendall(burst)
-            wait_for(lambda: server.stats.frames_ok >= 1)  # keep socket open while draining
+            wait_for(lambda: server.stats.frames_ok >= 1)  # stay connected until the server reads
 
     threads = [threading.Thread(target=blast, args=(c,)) for c in range(clients)]
     for t in threads:
@@ -80,7 +80,7 @@ def test_coalesced_burst_and_concurrency(server: TelemetryServer, log_path: Path
 def test_payload_bit_corruption(server: TelemetryServer, log_path: Path) -> None:
     f1, f2, f3 = (encode_frame(p) for p in (b"one", b"two", b"three"))
     flipped = bytearray(f2)
-    flipped[-1] ^= 0b0000_0001  # flip one payload bit; header stays valid
+    flipped[-1] ^= 0b0000_0001  # header stays valid
     with connect(server) as sock:
         sock.sendall(f1 + bytes(flipped) + f3)
         wait_for(lambda: server.stats.frames_ok == 2)
@@ -93,8 +93,8 @@ def test_bad_magic_closes_bad_client_only(server: TelemetryServer, log_path: Pat
     with connect(server) as bad, connect(server) as good:
         bad.sendall(b"GARBAGE-NOT-A-FRAME!")
         wait_for(lambda: server.stats.connections_closed == 1)
-        with suppress(ConnectionResetError):  # a reset is also a valid disconnect signal
-            assert bad.recv(1) == b""  # server closed its end
+        with suppress(ConnectionResetError):  # reset counts as disconnected too
+            assert bad.recv(1) == b""  # EOF
         good.sendall(encode_frame(b"still alive"))
         wait_for(lambda: server.stats.frames_ok == 1)
     assert read_log(log_path) == [b"still alive"]
@@ -114,5 +114,5 @@ def test_durable_fsync_called(
     with connect(server) as sock:
         sock.sendall(encode_frame(b"a") + encode_frame(b"b"))
         wait_for(lambda: server.stats.frames_ok == 2)
-    assert len(synced) == 2  # one fsync per persisted frame
+    assert len(synced) == 2  # one per frame
     assert read_log(log_path) == [b"a", b"b"]

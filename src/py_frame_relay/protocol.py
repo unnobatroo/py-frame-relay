@@ -1,17 +1,17 @@
-"""Length-prefixed, CRC-checked framing over a TCP byte stream."""
+"""Length-prefixed, CRC-checked frames over TCP."""
 
 import struct
 import zlib
 from collections.abc import Iterator
 
 MAGIC = b"PYFR"
-MAX_PAYLOAD_SIZE = 65_536  # cap per-client buffering
-HEADER = struct.Struct("!4sII")  # magic, payload length, crc32 (big-endian)
+MAX_PAYLOAD_SIZE = 65_536  # bounds per-client buffer
+HEADER = struct.Struct("!4sII")  # magic, length, crc32
 HEADER_SIZE = HEADER.size
 
 
 class FramingError(ValueError):
-    """Stream is misaligned or abusive; caller should drop the connection."""
+    """Stream is out of sync. Drop the client."""
 
 
 def _crc(payload: bytes) -> int:
@@ -25,16 +25,16 @@ def encode_frame(payload: bytes) -> bytes:
 
 
 class FrameDecoder:
-    """Buffers partial frames across recv() calls."""
+    """Buffers partial frames between recv() calls."""
 
     def __init__(self) -> None:
         self._buf = bytearray()
 
     def feed(self, chunk: bytes) -> Iterator[bytes | None]:
-        """Yield each payload, or None if its CRC failed.
+        """Yield payloads, or None on bad CRC.
 
-        Bad CRC is skippable (length was valid, so we stay aligned). Bad magic or
-        length raises FramingError after earlier frames have been yielded.
+        Bad CRC is skippable since the length is still good. Bad magic or
+        length raises FramingError after earlier frames are yielded.
         """
         self._buf += chunk
         while len(self._buf) >= HEADER_SIZE:

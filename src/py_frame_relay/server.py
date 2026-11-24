@@ -1,4 +1,4 @@
-"""Single-threaded, non-blocking telemetry collector."""
+"""Single-threaded telemetry collector."""
 
 import logging
 import os
@@ -31,10 +31,9 @@ class Stats:
 
 
 class TelemetryServer:
-    """Serves all clients from one thread.
+    """All clients on one thread.
 
-    DefaultSelector is epoll on Linux, kqueue/select elsewhere.
-    Note: fsync per frame blocks the loop; a slow disk stalls every client.
+    DefaultSelector is epoll on Linux. fsync per frame blocks the loop.
     """
 
     def __init__(self, host: str, port: int, log_path: Path) -> None:
@@ -46,7 +45,7 @@ class TelemetryServer:
         self.server_address: tuple[str, int] = self._bind
 
     def __enter__(self) -> Self:
-        with ExitStack() as stack:  # close anything already opened if setup fails
+        with ExitStack() as stack:  # cleans up if setup fails halfway
             self._log: IO[bytes] = stack.enter_context(self._log_path.open("ab"))
             self._sel = stack.enter_context(selectors.DefaultSelector())
             listener = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
@@ -78,7 +77,7 @@ class TelemetryServer:
                     self._read(key.data)
 
     def _accept(self, listener: socket.socket) -> None:
-        while True:  # one event can cover several pending connections
+        while True:  # one event can mean several pending clients
             try:
                 sock, addr = listener.accept()
             except BlockingIOError:
@@ -100,8 +99,7 @@ class TelemetryServer:
         if not chunk:
             return self._close(conn)
         try:
-            # Disk errors in _handle are not caught: blaming the client would hide
-            # lost data, so they stop the server instead.
+            # disk errors propagate on purpose; dropping the client would hide data loss
             for payload in conn.decoder.feed(chunk):
                 self._handle(conn, payload)
         except FramingError as exc:
@@ -113,7 +111,7 @@ class TelemetryServer:
             self.stats.frames_corrupt += 1
             log.warning("corrupt frame from %s", conn.addr)
             return
-        self._log.write(encode_frame(payload))  # keep framing so the log is parseable
+        self._log.write(encode_frame(payload))  # same format, so the log can be re-read
         self._log.flush()
         os.fsync(self._log.fileno())
         self.stats.frames_ok += 1
