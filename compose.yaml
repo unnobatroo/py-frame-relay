@@ -1,0 +1,12 @@
+services:
+  relay:
+    build: .
+    ports:
+      - "9000:9000"
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+    stop_grace_period: 5s
+
+volumes:
+  relay-data:
