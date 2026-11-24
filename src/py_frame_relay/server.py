@@ -92,13 +92,19 @@ class TelemetryServer:
     def _read(self, conn: Connection) -> None:
         try:
             chunk = conn.sock.recv(RECV_SIZE)
-            if not chunk:
-                return self._close(conn)
-            for payload in conn.decoder.feed(chunk):
-                self._handle(conn, payload)
         except BlockingIOError:
             return
-        except (FramingError, OSError) as exc:
+        except OSError as exc:
+            log.warning("dropping %s: %s", conn.addr, exc)
+            return self._close(conn)
+        if not chunk:
+            return self._close(conn)
+        try:
+            # Disk errors in _handle are not caught: blaming the client would hide
+            # lost data, so they stop the server instead.
+            for payload in conn.decoder.feed(chunk):
+                self._handle(conn, payload)
+        except FramingError as exc:
             log.warning("dropping %s: %s", conn.addr, exc)
             self._close(conn)
 
